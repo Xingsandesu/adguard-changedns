@@ -18,8 +18,7 @@
 
 ## Docker 存储库
 
-- 稳定版: `bncfbb/adguard-changedns`
-- 开发版: `XXXX/adguard-changedns`
+- 稳定版: `bncfbb/adguard-changedns:2.0`
 
 ## 关于
 
