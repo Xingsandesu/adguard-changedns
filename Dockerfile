@@ -1,9 +1,9 @@
-FROM python:3.13.0rc3-slim-bullseye AS venv_image
+FROM python:3.11.7-slim-bullseye AS venv_image
 COPY requirements.txt .
 RUN pip install --user -r requirements.txt
 
-FROM python:3.13.0rc3-slim-bullseye
-LABEL maintainer="bncfbb <bncfbb@163.com>"
+FROM python:3.11.7-slim-bullseye
+LABEL maintainer="bncfbb/Fushinn <https://github.com/Xingsandesu/adguard-changedns/>"
 ARG TZ=Asia/Shanghai
 ARG DEBIAN_FRONTEND="noninteractive"
 ENV PATH=/root/.local/bin:$PATH

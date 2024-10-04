@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
-import traceback
-import argparse
-import asyncio
-import atexit
-import sys
-import os
-
+from traceback import print_exc
+from argparse import ArgumentParser
+from asyncio import run
+from atexit import register
+from sys import exit
+from os import path
 
 from dns_client.adapters.requests import DNSClientSession
 from adguardhome import AdGuardHome, AdGuardHomeError
-from ping3 import ping, verbose_ping
-import dns.resolver
-import paramiko
-import requests
+from ping3 import ping
+from dns.resolver import Resolver
+from paramiko import SSHClient, AutoAddPolicy
 import logging
 import time
 
-from yaml import SafeLoader
-import yaml
+from yaml import SafeLoader, dump, load
 
 from openwrt import Openwrt
 from ikuai import iKuai
@@ -33,6 +30,54 @@ logging.basicConfig(
 )
 logging.getLogger('dns_client').setLevel(logging.WARNING)
 
+def create_sample_config(config_path):
+    sample_config = {
+        'ikuai': {
+            'host': '爱快ip',
+            'port': 80,
+            'user': 'admin',
+            'pwd': '爱快密码',
+            'check_wan': 'wan2'
+        },
+        'openwrt': {
+            'host': 'openwrt ip',
+            'port': 80,
+            'user': 'root',
+            'pwd': 'openwrt密码',
+            'ssh_port': 22,
+            'check_dns_domain': [
+                'itdog.cn',
+                'ip.skk.moe'
+            ],
+            'check_url': [
+                'https://www.google.com/generate_204'
+            ],
+            'onfail_restart_passwall': True,
+            'restart_mode': 0,
+            'retry_count': 0,
+            'retry_interval': 10
+        },
+        'adguardhome': [
+            {
+                'host': 'adguard ip',
+                'port': 80,
+                'user': 'admin',
+                'pwd': 'adguard密码',
+                'normal_upstream_dns': [
+                    'openwrt ip'
+                ],
+                'onfail_upstream_dns': [
+                    '国内dns'
+                ]
+            }
+        ],
+        'check_interval': 30
+    }
+    with open(config_path, 'w', encoding='utf-8') as f:
+        dump(sample_config, f, allow_unicode=True)
+    logging.info('示例配置文件已创建, 请修改后重新运行')
+    exit(0)
+
 def is_host_online(hostname) -> bool:
     response = ping(hostname)
     return response
@@ -40,7 +85,7 @@ def is_host_online(hostname) -> bool:
 # 检查域名是否可以解析
 def can_be_resolv(host) -> bool:
     try:
-        resolver = dns.resolver.Resolver()
+        resolver = Resolver()
         resolver.nameservers = [config['openwrt']['host']]
         resolver.resolve(host)
     except Exception:
@@ -77,8 +122,8 @@ def check_network(ikuai) -> str:
 
 # 重启passwall服务
 def passwall_restart():
-    ssh_connect = paramiko.SSHClient()
-    ssh_connect.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh_connect = SSHClient()
+    ssh_connect.set_missing_host_key_policy(AutoAddPolicy())
     ssh_connect.connect(config['openwrt']['host'],
                         config['openwrt']['ssh_port'],
                         config['openwrt']['user'],
@@ -103,81 +148,37 @@ async def set_adg_upstream(host, port, username, password, upstream_dns_list):
         error_message = str(e)
         if "(403, {'message': 'Forbidden'})" in error_message:
             logging.error("AdGuardHome认证错误: 访问被拒绝，请检查您的用户名和密码是否正确。")
-            sys.exit(1)
+            exit(1)
         else:
             logging.error(f"AdGuardHomeError: {error_message}")
-            sys.exit(1)
+            exit(1)
     except Exception as e:
         logging.error(f"发生未知错误: {e}")
-        sys.exit(1)
+        exit(1)
 
 if __name__ == '__main__':
     # 解析命令行参数
-    parser = argparse.ArgumentParser()
+    parser = ArgumentParser()
     parser.add_argument('--config', '-c', type=str, help='配置文件路径', default='config.yaml')
     args = vars(parser.parse_args())
     try:
-        if not os.path.exists(args['config']):
-            # 如果配置文件不存在，则创建一个示例配置文件
-            sample_config = {
-                'ikuai': {
-                    'host': '爱快ip',
-                    'port': 80,
-                    'user': 'admin',
-                    'pwd': '爱快密码',
-                    'check_wan': 'wan2'
-                },
-                'openwrt': {
-                    'host': 'openwrt ip',
-                    'port': 80,
-                    'user': 'root',
-                    'pwd': 'openwrt密码',
-                    'ssh_port': 22,
-                    'check_dns_domain': [
-                        'itdog.cn',
-                        'ip.skk.moe'
-                    ],
-                    'check_url': [
-                        'https://www.google.com/generate_204'
-                    ],
-                    'onfail_restart_passwall': True,
-                    'restart_mode': 0,
-                    'retry_count': 0,
-                    'retry_interval': 10
-                },
-                'adguardhome': [
-                    {
-                        'host': 'adguard ip',
-                        'port': 80,
-                        'user': 'admin',
-                        'pwd': 'adguard密码',
-                        'normal_upstream_dns': [
-                            'openwrt ip'
-                        ],
-                        'onfail_upstream_dns': [
-                            '国内dns'
-                        ]
-                    }
-                ],
-                'check_interval': 30
-            }
-            with open(args['config'], 'w', encoding='utf-8') as f:
-                yaml.dump(sample_config, f, allow_unicode=True)
-            logging.info('示例配置文件已创建, 请修改后重新运行')
-            sys.exit(0)
+        if not path.exists(args['config']):
+            create_sample_config(args['config'])
     
         # 加载配置文件
         with open(args['config'], 'r', encoding='utf-8') as f:
-            config = yaml.load(f, SafeLoader)
+            config = load(f, SafeLoader)
         logging.info('配置文件已加载')
     except Exception as e:
         logging.error(f'加载配置文件时出错: {e}')
-        sys.exit(1)
+        create_sample_config(args['config'])
+        logging.error('示例配置文件已恢复, 请重新修改后重新运行')
+        exit(1)
 
     prev_errmsg = '.'
     ikuai_logged = False
     ikuai = iKuai(host=config['ikuai']['host'], port=config['ikuai']['port'])
-    atexit.register(ikuai.logout)
+    register(ikuai.logout)
 
     while True:
         try:
@@ -188,9 +189,9 @@ if __name__ == '__main__':
             if not errmsg:
                 if prev_errmsg:
                     for adg in config['adguardhome']:
-                        asyncio.run(set_adg_upstream(adg['host'], adg['port'],
-                                                     adg['user'], adg['pwd'],
-                                                     adg['normal_upstream_dns']))
+                        run(set_adg_upstream(adg['host'], adg['port'],
+                                             adg['user'], adg['pwd'],
+                                             adg['normal_upstream_dns']))
                         logging.info(
                             f'网络已恢复, 已经将adguardhome {adg["host"]}上游dns切换为{adg["normal_upstream_dns"]}')
                 prev_errmsg = ''
@@ -213,9 +214,9 @@ if __name__ == '__main__':
                     if fail_count == config['openwrt']['retry_count']:
                         logging.info(f'重新检测全部失败')
                         for adg in config['adguardhome']:
-                            asyncio.run(set_adg_upstream(adg['host'], adg['port'],
-                                                         adg['user'], adg['pwd'],
-                                                         adg['onfail_upstream_dns']))
+                            run(set_adg_upstream(adg['host'], adg['port'],
+                                                 adg['user'], adg['pwd'],
+                                                 adg['onfail_upstream_dns']))
                             logging.error(
                                 f'错误信息->{errmsg}, 已经将adguardhome {adg["host"]}上游dns切换为{adg["onfail_upstream_dns"]}')
                         if config['openwrt']['onfail_restart_passwall'] == True:
@@ -237,13 +238,16 @@ if __name__ == '__main__':
                                 else:
                                     logging.info('openwrt不在线, 跳过重启passwall')
                             except TimeoutError:
-                                traceback.print_exc()
+                                print_exc()
                                 logging.error('配置文件中设置重启passwall, 但是连接Openwrt超时, 可能是Openwrt未运行, 跳过重启passwall')
                             except Exception as e:
-                                traceback.print_exc()
+                                print_exc()
                                 logging.error(e)
+        except KeyboardInterrupt:
+            logging.info('检测程序已退出')
+            exit(0)
         except Exception as e:
-            traceback.print_exc()
+            print_exc()
             logging.error(e)
             if 'no login authentication' in str(e):
                 logging.info('爱快登录会话过期, 重新登录...')

@@ -1,8 +1,9 @@
-name: build_docker
+name: dev_build_docker
 
 on:
-  release:
-    types: [ created ]
+  push:
+    branches:
+      - dev
 
 jobs:
   build_docker:
@@ -31,5 +32,4 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/adguard-changedns:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/adguard-changedns:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/adguard-changedns:dev
