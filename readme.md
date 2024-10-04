@@ -18,8 +18,8 @@
 
 ## Docker 存储库
 
-- 稳定版: `bncfbb/ikuai-chinaroute-xuefeng`
-- 开发版: `XXXX/ikuai-chinaroute-xuefeng`
+- 稳定版: `bncfbb/adguard-changedns`
+- 开发版: `XXXX/adguard-changedns`
 
 ## 关于
 
