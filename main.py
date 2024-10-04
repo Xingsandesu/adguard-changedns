@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
+import traceback
 import argparse
 import asyncio
 import atexit
 import sys
 import os
 
-import yaml
-from adguardhome import AdGuardHome, AdGuardHomeError
+
 from dns_client.adapters.requests import DNSClientSession
-import logging
-import time
-import dns.resolver
+from adguardhome import AdGuardHome, AdGuardHomeError
 from ping3 import ping, verbose_ping
+import dns.resolver
 import paramiko
 import requests
-from yaml import SafeLoader
-from ikuai import iKuai
-from openwrt import Openwrt
+import logging
+import time
 
-# 创建SSH连接对象
-ssh_connect = paramiko.SSHClient()
-ssh_connect.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+from yaml import SafeLoader
+import yaml
+
+from openwrt import Openwrt
+from ikuai import iKuai
 
 # 配置日志记录
 logging.basicConfig(
@@ -38,7 +38,7 @@ def is_host_online(hostname) -> bool:
     return response
 
 # 检查域名是否可以解析
-def can_be_resolv(host):
+def can_be_resolv(host) -> bool:
     try:
         resolver = dns.resolver.Resolver()
         resolver.nameservers = [config['openwrt']['host']]
@@ -48,7 +48,7 @@ def can_be_resolv(host):
     return True
 
 # 检查URL是否可以通过HTTP访问
-def can_be_http(url):
+def can_be_http(url) -> bool:
     try:
         # 发起请求，并指定请求头和SSL验证
         session = DNSClientSession(config['openwrt']['host'])
@@ -58,7 +58,7 @@ def can_be_http(url):
     return True
 
 # 检查网络状态
-def check_network(ikuai):
+def check_network(ikuai) -> str:
     # 获取爱快WAN口信息
     wan_info = ikuai.get_ether_info_filter(config['ikuai']['check_wan'])
     if wan_info['errmsg'] != '线路检测成功':
@@ -77,28 +77,21 @@ def check_network(ikuai):
 
 # 重启passwall服务
 def passwall_restart():
-    try:
-        # 连接OpenWRT
-        ssh_connect.connect(config['openwrt']['host'],
-                            config['openwrt']['ssh_port'],
-                            config['openwrt']['user'],
-                            config['openwrt']['pwd'])
-    except TimeoutError:
-        logging.error('连接openwrt超时,请检查网络或openwrt配置')
-    try:
-        # 执行passwall重启命令
-        ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
-        ssh_connect.exec_command('uci commit passwall')
-        ssh_connect.exec_command('/sbin/reload_config')
-        time.sleep(3)
-        ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
-        ssh_connect.exec_command('uci commit passwall')
-        ssh_connect.exec_command('/sbin/reload_config')
-        logging.info(f'passwall重启完成')
-        ssh_connect.close()
-    except Exception as e:
-        logging.error(f'passwall重启失败, 可能是适配问题,错误信息->{e}')
-        ssh_connect.close()
+    ssh_connect = paramiko.SSHClient()
+    ssh_connect.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh_connect.connect(config['openwrt']['host'],
+                        config['openwrt']['ssh_port'],
+                        config['openwrt']['user'],
+                        config['openwrt']['pwd'])
+    ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
+    ssh_connect.exec_command('uci commit passwall')
+    ssh_connect.exec_command('/sbin/reload_config')
+    time.sleep(3)
+    ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
+    ssh_connect.exec_command('uci commit passwall')
+    ssh_connect.exec_command('/sbin/reload_config')
+    logging.info(f'passwall重启完成')
+    ssh_connect.close()
 
 # 异步设置AdGuardHome的上游DNS
 async def set_adg_upstream(host, port, username, password, upstream_dns_list):
@@ -244,12 +237,15 @@ if __name__ == '__main__':
                                 else:
                                     logging.info('openwrt不在线, 跳过重启passwall')
                             except TimeoutError:
+                                traceback.print_exc()
                                 logging.error('配置文件中设置重启passwall, 但是连接Openwrt超时, 可能是Openwrt未运行, 跳过重启passwall')
                             except Exception as e:
+                                traceback.print_exc()
                                 logging.error(e)
         except Exception as e:
+            traceback.print_exc()
             logging.error(e)
-            if str(e).find('no login authentication') != -1:
+            if 'no login authentication' in str(e):
                 logging.info('爱快登录会话过期, 重新登录...')
                 ikuai_logged = False
                 continue
