@@ -1,13 +1,18 @@
-FROM ubuntu:20.04
+FROM python:3.11.7-slim-bookworm AS venv_image
+COPY requirements.txt .
+RUN pip install --user -r requirements.txt
+
+FROM python:3.11.7-slim-bookworm
 LABEL maintainer="bncfbb <bncfbb@163.com>"
 ARG TZ=Asia/Shanghai
 ARG DEBIAN_FRONTEND="noninteractive"
-COPY ./* /app/
+ENV PATH=/root/.local/bin:$PATH
+COPY --from=venv_image /root/.local /root/.local
 WORKDIR /app/
+COPY . /app/
 RUN apt-get update \
-    && apt-get install python3 python3-pip tzdata -y \
+    && apt-get install tzdata -y \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install -r requirements.txt --no-cache-dir \
     && chmod +x ./main.py \
     && echo "${TZ}" > /etc/timezone \
     && ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime
