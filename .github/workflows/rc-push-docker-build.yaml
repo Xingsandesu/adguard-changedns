@@ -1,10 +1,6 @@
 name: rc_build_docker
 
 on:
-  push:
-    branches:
-      - dev
-
   pull_request:
     branches:
       - main
