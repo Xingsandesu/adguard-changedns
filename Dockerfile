@@ -1,8 +1,8 @@
-FROM python:3.11.7-slim-bookworm AS venv_image
+FROM python:3.13.0rc3-slim-bullseye AS venv_image
 COPY requirements.txt .
 RUN pip install --user -r requirements.txt
 
-FROM python:3.11.7-slim-bookworm
+FROM python:3.13.0rc3-slim-bullseye
 LABEL maintainer="bncfbb <bncfbb@163.com>"
 ARG TZ=Asia/Shanghai
 ARG DEBIAN_FRONTEND="noninteractive"
