@@ -100,6 +100,8 @@ def can_be_http(url) -> bool:
         session.head(url, timeout=5)
     except Exception:
         return False
+    finally:
+        session.close()
     return True
 
 # 检查网络状态
@@ -124,19 +126,21 @@ def check_network(ikuai) -> str:
 def passwall_restart():
     ssh_connect = SSHClient()
     ssh_connect.set_missing_host_key_policy(AutoAddPolicy())
-    ssh_connect.connect(config['openwrt']['host'],
-                        config['openwrt']['ssh_port'],
-                        config['openwrt']['user'],
-                        config['openwrt']['pwd'])
-    ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
-    ssh_connect.exec_command('uci commit passwall')
-    ssh_connect.exec_command('/sbin/reload_config')
-    time.sleep(3)
-    ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
-    ssh_connect.exec_command('uci commit passwall')
-    ssh_connect.exec_command('/sbin/reload_config')
-    logging.info(f'passwall重启完成')
-    ssh_connect.close()
+    try:
+        ssh_connect.connect(config['openwrt']['host'],
+                            config['openwrt']['ssh_port'],
+                            config['openwrt']['user'],
+                            config['openwrt']['pwd'])
+        ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
+        ssh_connect.exec_command('uci commit passwall')
+        ssh_connect.exec_command('/sbin/reload_config')
+        time.sleep(3)
+        ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
+        ssh_connect.exec_command('uci commit passwall')
+        ssh_connect.exec_command('/sbin/reload_config')
+        logging.info(f'passwall重启完成')
+    finally:
+        ssh_connect.close()
 
 # 异步设置AdGuardHome的上游DNS
 async def set_adg_upstream(host, port, username, password, upstream_dns_list):
@@ -155,7 +159,10 @@ async def set_adg_upstream(host, port, username, password, upstream_dns_list):
     except Exception as e:
         logging.error(f"发生未知错误: {e}")
         exit(1)
+        
 
+#import tracemalloc
+#tracemalloc.start()
 if __name__ == '__main__':
     # 解析命令行参数
     parser = ArgumentParser()
@@ -181,6 +188,7 @@ if __name__ == '__main__':
     register(ikuai.logout)
 
     while True:
+        #snapshot1 = tracemalloc.take_snapshot()
         try:
             if not ikuai_logged:
                 ikuai.login(config['ikuai']['user'], config['ikuai']['pwd'])
@@ -205,7 +213,7 @@ if __name__ == '__main__':
                             errmsg = check_network(ikuai)
                             logging.info(f'正在重新检测网络状态... {i + 1}/{config["openwrt"]["retry_count"]}')
                             if errmsg:
-                                fail_count = fail_count + 1
+                                fail_count += 1
                             else:
                                 logging.info('网络恢已复, 取消重新检测')
                                 break
@@ -243,6 +251,7 @@ if __name__ == '__main__':
                             except Exception as e:
                                 print_exc()
                                 logging.error(e)
+                        
         except KeyboardInterrupt:
             logging.info('检测程序已退出')
             exit(0)
@@ -254,3 +263,9 @@ if __name__ == '__main__':
                 ikuai_logged = False
                 continue
         time.sleep(config['check_interval'])
+        #snapshot2 = tracemalloc.take_snapshot()
+        #top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+        #print("[ Top 10 differences ]")
+        #for stat in top_stats[:10]:
+        # 打印出来内存增加最多的前十个代码地址。
+        #    print(stat)
