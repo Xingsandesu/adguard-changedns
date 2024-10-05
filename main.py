@@ -235,7 +235,7 @@ if __name__ == '__main__':
                         if config['openwrt']['onfail_restart_passwall'] == True:
                             try:
                                 logging.info('配置文件中设置重启passwall, 检查OpenWRT连接情况...')
-                                if can_be_http(f'http://{config['openwrt']['host']}:{config['openwrt']['port']}', timeout=1):
+                                if can_be_http(f"http://{config['openwrt']['host']}:{config['openwrt']['port']}", timeout=1):
                                     logging.info('配置文件中设置重启passwall, 开始执行...')
                                     if config['openwrt']['restart_mode'] == 0:
                                         passwall_restart()
