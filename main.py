@@ -8,6 +8,7 @@ from atexit import register
 from sys import exit
 from os import path
 
+import requests
 from dns_client.adapters.requests import DNSClientSession
 from adguardhome import AdGuardHome, AdGuardHomeError
 from ping3 import ping
@@ -78,9 +79,9 @@ def create_sample_config(config_path):
     logging.info('示例配置文件已创建, 请修改后重新运行')
     exit(0)
 
-def is_host_online(hostname) -> bool:
-    response = ping(hostname)
-    return response
+#def is_host_online(hostname) -> bool:
+#    response = ping(hostname)
+#return response
 
 # 检查域名是否可以解析
 def can_be_resolv(host) -> bool:
@@ -93,15 +94,19 @@ def can_be_resolv(host) -> bool:
     return True
 
 # 检查URL是否可以通过HTTP访问
-def can_be_http(url) -> bool:
+def can_be_http(url, custom_dns=None, timeout=5) -> bool:
+    session = None
     try:
-        # 发起请求，并指定请求头和SSL验证
-        session = DNSClientSession(config['openwrt']['host'])
-        session.head(url, timeout=5)
+        if custom_dns:
+            session = DNSClientSession(custom_dns)
+            session.head(url, timeout=timeout)
+        else:
+            requests.head(url, timeout=timeout)
     except Exception:
         return False
     finally:
-        session.close()
+        if session:
+            session.close()
     return True
 
 # 检查网络状态
@@ -118,7 +123,7 @@ def check_network(ikuai) -> str:
 
     # 检查配置的URL是否可以访问
     for url in config['openwrt']['check_url']:
-        if not can_be_http(url):
+        if not can_be_http(url, config['openwrt']['host']):
             return f'访问国外网站{url}失败'
     return ''
 
@@ -230,7 +235,7 @@ if __name__ == '__main__':
                         if config['openwrt']['onfail_restart_passwall'] == True:
                             try:
                                 logging.info('配置文件中设置重启passwall, 检查OpenWRT连接情况...')
-                                if is_host_online(config['openwrt']['host']):
+                                if can_be_http(f'http://{config['openwrt']['host']}:{config['openwrt']['port']}', timeout=1):
                                     logging.info('配置文件中设置重启passwall, 开始执行...')
                                     if config['openwrt']['restart_mode'] == 0:
                                         passwall_restart()
