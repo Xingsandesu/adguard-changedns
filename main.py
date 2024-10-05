@@ -8,16 +8,16 @@ from atexit import register
 from sys import exit
 from os import path
 
-import requests
+
 from dns_client.adapters.requests import DNSClientSession
 from adguardhome import AdGuardHome, AdGuardHomeError
-from ping3 import ping
 from dns.resolver import Resolver
 from paramiko import SSHClient, AutoAddPolicy
+from yaml import SafeLoader, dump, load
+
+import requests
 import logging
 import time
-
-from yaml import SafeLoader, dump, load
 
 from openwrt import Openwrt
 from ikuai import iKuai
@@ -79,9 +79,13 @@ def create_sample_config(config_path):
     logging.info('示例配置文件已创建, 请修改后重新运行')
     exit(0)
 
-#def is_host_online(hostname) -> bool:
-#    response = ping(hostname)
-#return response
+'''
+废置代码
+from ping3 import ping
+def is_host_online(hostname) -> bool:
+    response = ping(hostname)
+return response
+'''
 
 # 检查域名是否可以解析
 def can_be_resolv(host) -> bool:
@@ -166,12 +170,11 @@ async def set_adg_upstream(host, port, username, password, upstream_dns_list):
         exit(1)
         
 
-#import tracemalloc
-#tracemalloc.start()
 if __name__ == '__main__':
     # 解析命令行参数
     parser = ArgumentParser()
     parser.add_argument('--config', '-c', type=str, help='配置文件路径', default='config.yaml')
+    parser.add_argument('--debug', action='store_true', help='启用内存泄漏检查')
     args = vars(parser.parse_args())
     try:
         if not path.exists(args['config']):
@@ -187,13 +190,18 @@ if __name__ == '__main__':
         logging.error('示例配置文件已恢复, 请重新修改后重新运行')
         exit(1)
 
+    if args['debug']:
+        import tracemalloc
+        tracemalloc.start()
+
     prev_errmsg = '.'
     ikuai_logged = False
     ikuai = iKuai(host=config['ikuai']['host'], port=config['ikuai']['port'])
     register(ikuai.logout)
 
     while True:
-        #snapshot1 = tracemalloc.take_snapshot()
+        if args['debug']:
+            snapshot1 = tracemalloc.take_snapshot()
         try:
             if not ikuai_logged:
                 ikuai.login(config['ikuai']['user'], config['ikuai']['pwd'])
@@ -268,9 +276,13 @@ if __name__ == '__main__':
                 ikuai_logged = False
                 continue
         time.sleep(config['check_interval'])
-        #snapshot2 = tracemalloc.take_snapshot()
-        #top_stats = snapshot2.compare_to(snapshot1, 'lineno')
-        #print("[ Top 10 differences ]")
-        #for stat in top_stats[:10]:
-        # 打印出来内存增加最多的前十个代码地址。
-        #    print(stat)
+        if args['debug']:
+            snapshot2 = tracemalloc.take_snapshot()
+            top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+            logging.debug("[ Top 10 differences ]")
+            for stat in top_stats[:10]:
+                logging.debug(f"{'*' * 60}\nFile: {stat.traceback[0].filename}\nLine: {stat.traceback[0].lineno}\nSize: {stat.size_diff / 1024:.1f} KiB\nCount: {stat.count_diff}\n{'*' * 60}")
+            
+            # 打印占用内存最多的
+            largest_stat = max(top_stats, key=lambda stat: stat.size_diff)
+            logging.debug(f"{'*' * 60}\n占用内存最多的:\nFile: {largest_stat.traceback[0].filename}\nLine: {largest_stat.traceback[0].lineno}\nSize: {largest_stat.size_diff / 1024:.1f} KiB\nCount: {largest_stat.count_diff}\n{'*' * 60}")
