@@ -8,15 +8,16 @@ from atexit import register
 from sys import exit
 from os import path
 
+
 from dns_client.adapters.requests import DNSClientSession
 from adguardhome import AdGuardHome, AdGuardHomeError
-from ping3 import ping
 from dns.resolver import Resolver
 from paramiko import SSHClient, AutoAddPolicy
+from yaml import SafeLoader, dump, load
+
+import requests
 import logging
 import time
-
-from yaml import SafeLoader, dump, load
 
 from openwrt import Openwrt
 from ikuai import iKuai
@@ -78,9 +79,13 @@ def create_sample_config(config_path):
     logging.info('示例配置文件已创建, 请修改后重新运行')
     exit(0)
 
+'''
+废置代码
+from ping3 import ping
 def is_host_online(hostname) -> bool:
     response = ping(hostname)
-    return response
+return response
+'''
 
 # 检查域名是否可以解析
 def can_be_resolv(host) -> bool:
@@ -93,13 +98,19 @@ def can_be_resolv(host) -> bool:
     return True
 
 # 检查URL是否可以通过HTTP访问
-def can_be_http(url) -> bool:
+def can_be_http(url, custom_dns=None, timeout=5) -> bool:
+    session = None
     try:
-        # 发起请求，并指定请求头和SSL验证
-        session = DNSClientSession(config['openwrt']['host'])
-        session.head(url, timeout=5)
+        if custom_dns:
+            session = DNSClientSession(custom_dns)
+            session.head(url, timeout=timeout)
+        else:
+            requests.head(url, timeout=timeout)
     except Exception:
         return False
+    finally:
+        if session:
+            session.close()
     return True
 
 # 检查网络状态
@@ -116,7 +127,7 @@ def check_network(ikuai) -> str:
 
     # 检查配置的URL是否可以访问
     for url in config['openwrt']['check_url']:
-        if not can_be_http(url):
+        if not can_be_http(url, config['openwrt']['host']):
             return f'访问国外网站{url}失败'
     return ''
 
@@ -124,19 +135,21 @@ def check_network(ikuai) -> str:
 def passwall_restart():
     ssh_connect = SSHClient()
     ssh_connect.set_missing_host_key_policy(AutoAddPolicy())
-    ssh_connect.connect(config['openwrt']['host'],
-                        config['openwrt']['ssh_port'],
-                        config['openwrt']['user'],
-                        config['openwrt']['pwd'])
-    ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
-    ssh_connect.exec_command('uci commit passwall')
-    ssh_connect.exec_command('/sbin/reload_config')
-    time.sleep(3)
-    ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
-    ssh_connect.exec_command('uci commit passwall')
-    ssh_connect.exec_command('/sbin/reload_config')
-    logging.info(f'passwall重启完成')
-    ssh_connect.close()
+    try:
+        ssh_connect.connect(config['openwrt']['host'],
+                            config['openwrt']['ssh_port'],
+                            config['openwrt']['user'],
+                            config['openwrt']['pwd'])
+        ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
+        ssh_connect.exec_command('uci commit passwall')
+        ssh_connect.exec_command('/sbin/reload_config')
+        time.sleep(3)
+        ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
+        ssh_connect.exec_command('uci commit passwall')
+        ssh_connect.exec_command('/sbin/reload_config')
+        logging.info(f'passwall重启完成')
+    finally:
+        ssh_connect.close()
 
 # 异步设置AdGuardHome的上游DNS
 async def set_adg_upstream(host, port, username, password, upstream_dns_list):
@@ -155,11 +168,13 @@ async def set_adg_upstream(host, port, username, password, upstream_dns_list):
     except Exception as e:
         logging.error(f"发生未知错误: {e}")
         exit(1)
+        
 
 if __name__ == '__main__':
     # 解析命令行参数
     parser = ArgumentParser()
     parser.add_argument('--config', '-c', type=str, help='配置文件路径', default='config.yaml')
+    parser.add_argument('--debug', action='store_true', help='启用内存泄漏检查')
     args = vars(parser.parse_args())
     try:
         if not path.exists(args['config']):
@@ -175,12 +190,18 @@ if __name__ == '__main__':
         logging.error('示例配置文件已恢复, 请重新修改后重新运行')
         exit(1)
 
+    if args['debug']:
+        import tracemalloc
+        tracemalloc.start()
+
     prev_errmsg = '.'
     ikuai_logged = False
     ikuai = iKuai(host=config['ikuai']['host'], port=config['ikuai']['port'])
     register(ikuai.logout)
 
     while True:
+        if args['debug']:
+            snapshot1 = tracemalloc.take_snapshot()
         try:
             if not ikuai_logged:
                 ikuai.login(config['ikuai']['user'], config['ikuai']['pwd'])
@@ -205,7 +226,7 @@ if __name__ == '__main__':
                             errmsg = check_network(ikuai)
                             logging.info(f'正在重新检测网络状态... {i + 1}/{config["openwrt"]["retry_count"]}')
                             if errmsg:
-                                fail_count = fail_count + 1
+                                fail_count += 1
                             else:
                                 logging.info('网络恢已复, 取消重新检测')
                                 break
@@ -222,7 +243,7 @@ if __name__ == '__main__':
                         if config['openwrt']['onfail_restart_passwall'] == True:
                             try:
                                 logging.info('配置文件中设置重启passwall, 检查OpenWRT连接情况...')
-                                if is_host_online(config['openwrt']['host']):
+                                if can_be_http(f"http://{config['openwrt']['host']}:{config['openwrt']['port']}", timeout=1):
                                     logging.info('配置文件中设置重启passwall, 开始执行...')
                                     if config['openwrt']['restart_mode'] == 0:
                                         passwall_restart()
@@ -243,6 +264,7 @@ if __name__ == '__main__':
                             except Exception as e:
                                 print_exc()
                                 logging.error(e)
+                        
         except KeyboardInterrupt:
             logging.info('检测程序已退出')
             exit(0)
@@ -254,3 +276,13 @@ if __name__ == '__main__':
                 ikuai_logged = False
                 continue
         time.sleep(config['check_interval'])
+        if args['debug']:
+            snapshot2 = tracemalloc.take_snapshot()
+            top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+            logging.debug("[ Top 10 differences ]")
+            for stat in top_stats[:10]:
+                logging.debug(f"{'*' * 60}\nFile: {stat.traceback[0].filename}\nLine: {stat.traceback[0].lineno}\nSize: {stat.size_diff / 1024:.1f} KiB\nCount: {stat.count_diff}\n{'*' * 60}")
+            
+            # 打印占用内存最多的
+            largest_stat = max(top_stats, key=lambda stat: stat.size_diff)
+            logging.debug(f"{'*' * 60}\n占用内存最多的:\nFile: {largest_stat.traceback[0].filename}\nLine: {largest_stat.traceback[0].lineno}\nSize: {largest_stat.size_diff / 1024:.1f} KiB\nCount: {largest_stat.count_diff}\n{'*' * 60}")
