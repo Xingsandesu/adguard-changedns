@@ -3,14 +3,13 @@
 
 from traceback import print_exc
 from argparse import ArgumentParser
-from asyncio import run
 from atexit import register
 from sys import exit
 from os import path
 
-
+from adguardhome import AdGuardHome
 from dns_client.adapters.requests import DNSClientSession
-from adguardhome import AdGuardHome, AdGuardHomeError
+
 from dns.resolver import Resolver
 from paramiko import SSHClient, AutoAddPolicy
 from yaml import SafeLoader, dump, load
@@ -152,23 +151,19 @@ def passwall_restart():
     finally:
         ssh_connect.close()
 
-# 异步设置AdGuardHome的上游DNS
-async def set_adg_upstream(host, port, username, password, upstream_dns_list):
+# 设置AdGuardHome的上游DNS
+def set_adg_upstream(host, port, username, password, upstream_dns_list):
     try:
-        async with AdGuardHome(host=host, port=port, username=username, password=password) as adguard:
-            await adguard.request('dns_config', 'POST',
-                                  json_data={"upstream_dns": upstream_dns_list})
-    except AdGuardHomeError as e:
+        adguard = AdGuardHome(host=host, port=port, username=username, password=password)
+        adguard.set_upstream_dns(upstream_dns_list)
+    except Exception as e:
         error_message = str(e)
-        if "(403, {'message': 'Forbidden'})" in error_message:
+        if "forbidden" in error_message:
             logging.error("AdGuardHome认证错误: 访问被拒绝，请检查您的用户名和密码是否正确。")
             exit(1)
         else:
             logging.error(f"AdGuardHomeError: {error_message}")
             exit(1)
-    except Exception as e:
-        logging.error(f"发生未知错误: {e}")
-        exit(1)
         
 
 if __name__ == '__main__':
@@ -212,9 +207,9 @@ if __name__ == '__main__':
             if not errmsg:
                 if prev_errmsg:
                     for adg in config['adguardhome']:
-                        run(set_adg_upstream(adg['host'], adg['port'],
+                        set_adg_upstream(adg['host'], adg['port'],
                                              adg['user'], adg['pwd'],
-                                             adg['normal_upstream_dns']))
+                                             adg['normal_upstream_dns'])
                         logging.info(
                             f'网络已恢复, 已经将adguardhome {adg["host"]}上游dns切换为{adg["normal_upstream_dns"]}')
                 prev_errmsg = ''
@@ -237,9 +232,9 @@ if __name__ == '__main__':
                     if fail_count == config['openwrt']['retry_count']:
                         logging.info(f'重新检测全部失败')
                         for adg in config['adguardhome']:
-                            run(set_adg_upstream(adg['host'], adg['port'],
+                            set_adg_upstream(adg['host'], adg['port'],
                                                  adg['user'], adg['pwd'],
-                                                 adg['onfail_upstream_dns']))
+                                                 adg['onfail_upstream_dns'])
                             logging.error(
                                 f'错误信息->{errmsg}, 已经将adguardhome {adg["host"]}上游dns切换为{adg["onfail_upstream_dns"]}')
                         if config['openwrt']['onfail_restart_passwall'] == True:

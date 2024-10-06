@@ -1,4 +1,3 @@
-adguardhome
 beautifulsoup4
 dnspython
 dns-client
