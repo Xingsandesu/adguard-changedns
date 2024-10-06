@@ -90,9 +90,9 @@ return response
 # 检查域名是否可以解析
 def can_be_resolv(host) -> bool:
     try:
-        with Resolver() as resolver:
-            resolver.nameservers = [config['openwrt']['host']]
-            resolver.resolve(host)
+        resolver = Resolver()
+        resolver.nameservers = [config['openwrt']['host']]
+        resolver.resolve(host)
     except Exception:
         return False
     return True

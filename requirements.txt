@@ -5,4 +5,3 @@ lxml
 paramiko
 PyYAML
 requests
-ping3
