@@ -90,27 +90,24 @@ return response
 # 检查域名是否可以解析
 def can_be_resolv(host) -> bool:
     try:
-        resolver = Resolver()
-        resolver.nameservers = [config['openwrt']['host']]
-        resolver.resolve(host)
+        with Resolver() as resolver:
+            resolver.nameservers = [config['openwrt']['host']]
+            resolver.resolve(host)
     except Exception:
         return False
     return True
 
+
 # 检查URL是否可以通过HTTP访问
 def can_be_http(url, custom_dns=None, timeout=5) -> bool:
-    session = None
     try:
         if custom_dns:
-            session = DNSClientSession(custom_dns)
-            session.head(url, timeout=timeout)
+            with DNSClientSession(custom_dns) as session:
+                session.head(url, timeout=timeout)
         else:
             requests.head(url, timeout=timeout)
     except Exception:
         return False
-    finally:
-        if session:
-            session.close()
     return True
 
 # 检查网络状态
@@ -133,23 +130,23 @@ def check_network(ikuai) -> str:
 
 # 重启passwall服务
 def passwall_restart():
-    ssh_connect = SSHClient()
-    ssh_connect.set_missing_host_key_policy(AutoAddPolicy())
-    try:
-        ssh_connect.connect(config['openwrt']['host'],
-                            config['openwrt']['ssh_port'],
-                            config['openwrt']['user'],
-                            config['openwrt']['pwd'])
-        ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
-        ssh_connect.exec_command('uci commit passwall')
-        ssh_connect.exec_command('/sbin/reload_config')
-        time.sleep(3)
-        ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
-        ssh_connect.exec_command('uci commit passwall')
-        ssh_connect.exec_command('/sbin/reload_config')
-        logging.info(f'passwall重启完成')
-    finally:
-        ssh_connect.close()
+    with SSHClient() as ssh_connect:
+        ssh_connect.set_missing_host_key_policy(AutoAddPolicy())
+        try:
+            ssh_connect.connect(config['openwrt']['host'],
+                                config['openwrt']['ssh_port'],
+                                config['openwrt']['user'],
+                                config['openwrt']['pwd'])
+            ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
+            ssh_connect.exec_command('uci commit passwall')
+            ssh_connect.exec_command('/sbin/reload_config')
+            time.sleep(3)
+            ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
+            ssh_connect.exec_command('uci commit passwall')
+            ssh_connect.exec_command('/sbin/reload_config')
+            logging.info('passwall重启完成')
+        except Exception as e:
+            logging.error(f'重启passwall服务时出错: {e}')
 
 # 设置AdGuardHome的上游DNS
 def set_adg_upstream(host, port, username, password, upstream_dns_list):
