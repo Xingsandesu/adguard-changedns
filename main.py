@@ -3,14 +3,13 @@
 
 from traceback import print_exc
 from argparse import ArgumentParser
-from asyncio import run
 from atexit import register
 from sys import exit
 from os import path
 
-
+from adguardhome import AdGuardHome
 from dns_client.adapters.requests import DNSClientSession
-from adguardhome import AdGuardHome, AdGuardHomeError
+
 from dns.resolver import Resolver
 from paramiko import SSHClient, AutoAddPolicy
 from yaml import SafeLoader, dump, load
@@ -18,6 +17,7 @@ from yaml import SafeLoader, dump, load
 import requests
 import logging
 import time
+import gc
 
 from openwrt import Openwrt
 from ikuai import iKuai
@@ -97,20 +97,17 @@ def can_be_resolv(host) -> bool:
         return False
     return True
 
+
 # 检查URL是否可以通过HTTP访问
 def can_be_http(url, custom_dns=None, timeout=5) -> bool:
-    session = None
     try:
         if custom_dns:
-            session = DNSClientSession(custom_dns)
-            session.head(url, timeout=timeout)
+            with DNSClientSession(custom_dns) as session:
+                session.head(url, timeout=timeout)
         else:
             requests.head(url, timeout=timeout)
     except Exception:
         return False
-    finally:
-        if session:
-            session.close()
     return True
 
 # 检查网络状态
@@ -133,41 +130,37 @@ def check_network(ikuai) -> str:
 
 # 重启passwall服务
 def passwall_restart():
-    ssh_connect = SSHClient()
-    ssh_connect.set_missing_host_key_policy(AutoAddPolicy())
-    try:
-        ssh_connect.connect(config['openwrt']['host'],
-                            config['openwrt']['ssh_port'],
-                            config['openwrt']['user'],
-                            config['openwrt']['pwd'])
-        ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
-        ssh_connect.exec_command('uci commit passwall')
-        ssh_connect.exec_command('/sbin/reload_config')
-        time.sleep(3)
-        ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
-        ssh_connect.exec_command('uci commit passwall')
-        ssh_connect.exec_command('/sbin/reload_config')
-        logging.info(f'passwall重启完成')
-    finally:
-        ssh_connect.close()
+    with SSHClient() as ssh_connect:
+        ssh_connect.set_missing_host_key_policy(AutoAddPolicy())
+        try:
+            ssh_connect.connect(config['openwrt']['host'],
+                                config['openwrt']['ssh_port'],
+                                config['openwrt']['user'],
+                                config['openwrt']['pwd'])
+            ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
+            ssh_connect.exec_command('uci commit passwall')
+            ssh_connect.exec_command('/sbin/reload_config')
+            time.sleep(3)
+            ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
+            ssh_connect.exec_command('uci commit passwall')
+            ssh_connect.exec_command('/sbin/reload_config')
+            logging.info('passwall重启完成')
+        except Exception as e:
+            logging.error(f'重启passwall服务时出错: {e}')
 
-# 异步设置AdGuardHome的上游DNS
-async def set_adg_upstream(host, port, username, password, upstream_dns_list):
+# 设置AdGuardHome的上游DNS
+def set_adg_upstream(host, port, username, password, upstream_dns_list):
     try:
-        async with AdGuardHome(host=host, port=port, username=username, password=password) as adguard:
-            await adguard.request('dns_config', 'POST',
-                                  json_data={"upstream_dns": upstream_dns_list})
-    except AdGuardHomeError as e:
+        adguard = AdGuardHome(host=host, port=port, username=username, password=password)
+        adguard.set_upstream_dns(upstream_dns_list)
+    except Exception as e:
         error_message = str(e)
-        if "(403, {'message': 'Forbidden'})" in error_message:
+        if "forbidden" in error_message:
             logging.error("AdGuardHome认证错误: 访问被拒绝，请检查您的用户名和密码是否正确。")
             exit(1)
         else:
             logging.error(f"AdGuardHomeError: {error_message}")
             exit(1)
-    except Exception as e:
-        logging.error(f"发生未知错误: {e}")
-        exit(1)
         
 
 if __name__ == '__main__':
@@ -175,6 +168,7 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--config', '-c', type=str, help='配置文件路径', default='config.yaml')
     parser.add_argument('--debug', action='store_true', help='启用内存泄漏检查')
+    parser.add_argument('--gc', action='store_true', help='启用手动垃圾回收')
     args = vars(parser.parse_args())
     try:
         if not path.exists(args['config']):
@@ -210,9 +204,9 @@ if __name__ == '__main__':
             if not errmsg:
                 if prev_errmsg:
                     for adg in config['adguardhome']:
-                        run(set_adg_upstream(adg['host'], adg['port'],
+                        set_adg_upstream(adg['host'], adg['port'],
                                              adg['user'], adg['pwd'],
-                                             adg['normal_upstream_dns']))
+                                             adg['normal_upstream_dns'])
                         logging.info(
                             f'网络已恢复, 已经将adguardhome {adg["host"]}上游dns切换为{adg["normal_upstream_dns"]}')
                 prev_errmsg = ''
@@ -235,9 +229,9 @@ if __name__ == '__main__':
                     if fail_count == config['openwrt']['retry_count']:
                         logging.info(f'重新检测全部失败')
                         for adg in config['adguardhome']:
-                            run(set_adg_upstream(adg['host'], adg['port'],
+                            set_adg_upstream(adg['host'], adg['port'],
                                                  adg['user'], adg['pwd'],
-                                                 adg['onfail_upstream_dns']))
+                                                 adg['onfail_upstream_dns'])
                             logging.error(
                                 f'错误信息->{errmsg}, 已经将adguardhome {adg["host"]}上游dns切换为{adg["onfail_upstream_dns"]}')
                         if config['openwrt']['onfail_restart_passwall'] == True:
@@ -276,13 +270,28 @@ if __name__ == '__main__':
                 ikuai_logged = False
                 continue
         time.sleep(config['check_interval'])
+        
+                    
+        
         if args['debug']:
             snapshot2 = tracemalloc.take_snapshot()
             top_stats = snapshot2.compare_to(snapshot1, 'lineno')
-            logging.debug("[ Top 10 differences ]")
+            logging.info("[ Top 10 differences ]")
             for stat in top_stats[:10]:
-                logging.debug(f"{'*' * 60}\nFile: {stat.traceback[0].filename}\nLine: {stat.traceback[0].lineno}\nSize: {stat.size_diff / 1024:.1f} KiB\nCount: {stat.count_diff}\n{'*' * 60}")
+                logging.info(f"{'*' * 60}\nFile: {stat.traceback[0].filename}\nLine: {stat.traceback[0].lineno}\nSize: {stat.size_diff / 1024:.1f} KiB\nCount: {stat.count_diff}\n{'*' * 60}")
             
             # 打印占用内存最多的
             largest_stat = max(top_stats, key=lambda stat: stat.size_diff)
-            logging.debug(f"{'*' * 60}\n占用内存最多的:\nFile: {largest_stat.traceback[0].filename}\nLine: {largest_stat.traceback[0].lineno}\nSize: {largest_stat.size_diff / 1024:.1f} KiB\nCount: {largest_stat.count_diff}\n{'*' * 60}")
+            logging.info(f"{'*' * 60}\n占用内存最多的:\nFile: {largest_stat.traceback[0].filename}\nLine: {largest_stat.traceback[0].lineno}\nSize: {largest_stat.size_diff / 1024:.1f} KiB\nCount: {largest_stat.count_diff}\n{'*' * 60}")
+            
+            
+        if args['gc']:
+            #counts_before = gc.get_count()
+            #print(f'清理前: {counts_before}')
+            gc.collect()
+            #counts_after = gc.get_count()
+            #print(f'清理后: {counts_after}')
+            
+            # 计算清理的对象数量
+            #cleared_objects = counts_before[0] - counts_after[0]
+            #logging.info(f'清理了 {cleared_objects} 个对象')
