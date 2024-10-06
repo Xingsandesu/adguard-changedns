@@ -16,4 +16,4 @@ RUN apt-get update \
     && chmod +x ./main.py \
     && echo "${TZ}" > /etc/timezone \
     && ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime
-ENTRYPOINT ["/app/main.py", "-c", "/config/config.yaml"]
+ENTRYPOINT ["/app/main.py", "-c", "/config/config.yaml", "--gc"]

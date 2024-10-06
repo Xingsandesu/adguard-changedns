@@ -18,6 +18,7 @@ from yaml import SafeLoader, dump, load
 import requests
 import logging
 import time
+import gc
 
 from openwrt import Openwrt
 from ikuai import iKuai
@@ -175,6 +176,7 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--config', '-c', type=str, help='配置文件路径', default='config.yaml')
     parser.add_argument('--debug', action='store_true', help='启用内存泄漏检查')
+    parser.add_argument('--gc', action='store_true', help='启用手动垃圾回收')
     args = vars(parser.parse_args())
     try:
         if not path.exists(args['config']):
@@ -276,13 +278,28 @@ if __name__ == '__main__':
                 ikuai_logged = False
                 continue
         time.sleep(config['check_interval'])
+        
+                    
+        
         if args['debug']:
             snapshot2 = tracemalloc.take_snapshot()
             top_stats = snapshot2.compare_to(snapshot1, 'lineno')
-            logging.debug("[ Top 10 differences ]")
+            logging.info("[ Top 10 differences ]")
             for stat in top_stats[:10]:
-                logging.debug(f"{'*' * 60}\nFile: {stat.traceback[0].filename}\nLine: {stat.traceback[0].lineno}\nSize: {stat.size_diff / 1024:.1f} KiB\nCount: {stat.count_diff}\n{'*' * 60}")
+                logging.info(f"{'*' * 60}\nFile: {stat.traceback[0].filename}\nLine: {stat.traceback[0].lineno}\nSize: {stat.size_diff / 1024:.1f} KiB\nCount: {stat.count_diff}\n{'*' * 60}")
             
             # 打印占用内存最多的
             largest_stat = max(top_stats, key=lambda stat: stat.size_diff)
-            logging.debug(f"{'*' * 60}\n占用内存最多的:\nFile: {largest_stat.traceback[0].filename}\nLine: {largest_stat.traceback[0].lineno}\nSize: {largest_stat.size_diff / 1024:.1f} KiB\nCount: {largest_stat.count_diff}\n{'*' * 60}")
+            logging.info(f"{'*' * 60}\n占用内存最多的:\nFile: {largest_stat.traceback[0].filename}\nLine: {largest_stat.traceback[0].lineno}\nSize: {largest_stat.size_diff / 1024:.1f} KiB\nCount: {largest_stat.count_diff}\n{'*' * 60}")
+            
+            
+        if args['gc']:
+            #counts_before = gc.get_count()
+            #print(f'清理前: {counts_before}')
+            gc.collect()
+            #counts_after = gc.get_count()
+            #print(f'清理后: {counts_after}')
+            
+            # 计算清理的对象数量
+            #cleared_objects = counts_before[0] - counts_after[0]
+            #logging.info(f'清理了 {cleared_objects} 个对象')
