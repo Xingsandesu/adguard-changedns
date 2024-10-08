@@ -61,3 +61,7 @@ adguardhome:
     onfail_upstream_dns:
       - '国内dns'
 check_interval: 30
+```
+
+## 常见问题
+1.  关于内存泄漏问题在2.4版本已经解决
