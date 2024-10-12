@@ -128,6 +128,7 @@ def check_network(ikuai) -> str:
             return f'访问国外网站{url}失败'
     return ''
 
+'''
 # 重启passwall服务
 def passwall_restart():
     with SSHClient() as ssh_connect:
@@ -147,7 +148,26 @@ def passwall_restart():
             logging.info('passwall重启完成')
         except Exception as e:
             logging.error(f'重启passwall服务时出错: {e}')
-
+'''
+# 重启passwall服务
+def passwall_restart():
+    ssh_connect = SSHClient()
+    ssh_connect.set_missing_host_key_policy(AutoAddPolicy())
+    try:
+        ssh_connect.connect(config['openwrt']['host'],
+                            config['openwrt']['ssh_port'],
+                            config['openwrt']['user'],
+                            config['openwrt']['pwd'])
+        ssh_connect.exec_command("uci set passwall.@global[0].enabled='0'")
+        ssh_connect.exec_command('uci commit passwall')
+        ssh_connect.exec_command('/sbin/reload_config')
+        time.sleep(3)
+        ssh_connect.exec_command("uci set passwall.@global[0].enabled='1'")
+        ssh_connect.exec_command('uci commit passwall')
+        ssh_connect.exec_command('/sbin/reload_config')
+        logging.info(f'passwall重启完成')
+    finally:
+        ssh_connect.close()
 # 设置AdGuardHome的上游DNS
 def set_adg_upstream(host, port, username, password, upstream_dns_list):
     try:
