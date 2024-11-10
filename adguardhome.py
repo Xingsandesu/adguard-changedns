@@ -13,7 +13,7 @@ class AdGuardHome:
     def set_upstream_dns(self, upstream_dns):
         json_data = {"upstream_dns": upstream_dns}
         try:
-            resp = self.__session.post(self.__base_url + '/control/dns_config', json=json_data)
+            resp = self.__session.post(self.__base_url + '/control/dns_config', timeout=5, json=json_data)
             raise_exception('设置上游DNS服务器', resp)
         finally:
             self.__session.close()
