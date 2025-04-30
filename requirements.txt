@@ -1,7 +1,5 @@
-beautifulsoup4
 dnspython
 dns-client
-lxml
 paramiko
 PyYAML
 requests
