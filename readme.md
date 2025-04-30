@@ -48,9 +48,6 @@ openwrt:
   check_url:
     - 'https://www.google.com/generate_204'
   onfail_restart_passwall: true
-  restart_mode: 0
-  retry_count: 0
-  retry_interval: 10
 adguardhome:
   - host: 'adguard ip'
     port: 80
