@@ -1,130 +1,90 @@
-
 import base64
 import hashlib
 import logging
-
 import requests
-import json
+from json import JSONDecodeError
+from typing import Dict, Any
+from const import REQUEST_TIMEOUT
+from error import NetworkCheckError
 
 
-class iKuai:
-    def __init__(self, scheme="http", host='192.168.1.1', port=80):
-        self.__cookie = None
-        self.scheme = scheme
-        self.host = host
-        self.port = port
-        self.__base_url = '{}://{}:{}'.format(scheme, host, port)
+class IKuaiClient:
+    """爱快路由器客户端"""
 
-    def login(self, username, password):
-        json_data = {
-            'username': username,
-            'passwd': hashlib.md5(password.encode()).hexdigest(),
-            'pass': base64.b64encode(('salt_11' + password).encode()).decode(),
-            'remember_password': ''
+    def __init__(self, host: str, port: int, username: str, password: str):
+        self.base_url = f"http://{host}:{port}"
+        self.username = username
+        self.password = password
+        self.session = requests.Session()
+        self._login()
+
+    def _login(self) -> None:
+        """执行登录并维护会话状态"""
+        login_data = {
+            "username": self.username,
+            "passwd": hashlib.md5(self.password.encode()).hexdigest(),
+            "pass": base64.b64encode(f"salt_11{self.password}".encode()).decode(),
+            "remember_password": ""
         }
 
-        # print(json_data)
-        resp = requests.post(self.__base_url + '/Action/login', timeout=5, json=json_data)
-        resp_json = json.loads(resp.text)
-        raise_exception('登录', resp_json)
-        self.__cookie = resp.cookies
+        try:
+            response = self.session.post(
+                f"{self.base_url}/Action/login",
+                json=login_data,
+                timeout=REQUEST_TIMEOUT
+            )
+            response.raise_for_status()
+            self._validate_login_response(response.json())
+        except requests.exceptions.RequestException as e:
+            raise NetworkCheckError(f"登录请求失败: {str(e)}") from e
 
-    def logout(self):
-        requests.post(self.__base_url + '/Action/logout', timeout=5, json={}, cookies=self.__cookie)
+    def _validate_login_response(self, response_data: dict) -> None:
+        """验证登录响应"""
+        if not response_data.get("Result") != 0:
+            error_msg = response_data.get("ErrMsg", "未知错误")
+            raise NetworkCheckError(f"登录验证失败: {error_msg}")
 
-    def get_custom_isp_list(self):
-        json_data = {"func_name": "custom_isp", "action": "show",
-                     "param": {"TYPE": "total,data", "limit": "0,100", "ORDER_BY": "", "ORDER": ""}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('获取自定义运营商', resp_json)
-        return resp_json['Data']['data']
+    def _call_api(self, endpoint: str, payload: dict, max_retries: int = 2) -> dict:
+        """带会话状态检查的API调用"""
+        for attempt in range(max_retries + 1):
+            try:
+                response = self.session.post(
+                    f"{self.base_url}/Action/call",
+                    json=payload,
+                    timeout=REQUEST_TIMEOUT
+                )
+                response_data = response.json()
 
-    def set_custom_isp(self, name, id, content):
-        json_data = {"func_name": "custom_isp", "action": "edit",
-                     "param": {"id": id, "name": name, "ipgroup": content, "comment": ""}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('修改自定义运营商', resp_json)
+                # 检查会话过期错误
+                if response_data.get("Result") == 10014:
+                    logging.warning("检测到会话过期，尝试重新登录...")
+                    self._login()
+                    continue
 
-    def create_custom_isp(self, name):
-        json_data = {"func_name": "custom_isp", "action": "add", "param": {"name": name, "ipgroup": ","}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('创建自定义运营商', resp_json)
-        return resp_json['RowId']
+                response.raise_for_status()
+                return response_data
 
-    def get_dns_config(self):
-        json_data = {"func_name": "dns","action": "show","param": {"TYPE": "dns_config"}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('获取DNS配置', resp_json)
-        return resp_json['Data']['data'][0]
+            except requests.exceptions.HTTPError as e:
+                if attempt == max_retries:
+                    raise NetworkCheckError(f"API请求失败: {str(e)}") from e
+            except JSONDecodeError as e:
+                raise NetworkCheckError("响应解析失败") from e
 
-    def set_dns_config(self, param):
-        json_data = {
-            "func_name": "dns",
-            "action": "save",
-            "param": param
+        raise NetworkCheckError("API请求达到最大重试次数")
+
+    def get_interface_info(self, interface: str) -> Dict[str, Any]:
+        """获取指定接口信息（带会话管理）"""
+        payload = {
+            "func_name": "monitor_iface",
+            "action": "show",
+            "param": {"TYPE": "iface_check"}
         }
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('设置DNS配置', resp_json)
 
-    def get_stream_ipport_list(self):
-        json_data = {"func_name":"stream_ipport","action":"show","param":{"TYPE":"total,data","limit":"0,100","ORDER_BY":"","ORDER":""}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('获取端口分流列表', resp_json)
-        return resp_json['Data']['data']
-
-    def set_stream_ipport_enable(self, id, enable):
-        action = 'up'
-        if not enable:
-            action = 'down'
-        json_data = {"func_name": "stream_ipport", "action": action, "param":{"id": id}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception(f'修改端口分流状态{action}', resp_json)
-
-    def get_natrule_list(self):
-        json_data = {"func_name":"nat_rule","action":"show","param":{"TYPE":"total,data","limit":"0,100","ORDER_BY":"","ORDER":""}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('获取NAT规则列表', resp_json)
-        return resp_json['Data']['data']
-
-    def set_natrule_enable(self, id, enable):
-        action = 'up'
-        if not enable:
-            action = 'down'
-        json_data = {"func_name": "nat_rule", "action": action, "param": {"id": id}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception(f'修改端口分流状态{action}', resp_json)
-
-    def get_ether_info(self):
-        json_data = {"func_name": "homepage", "action": "show", "param": {"TYPE": "ether_info,snapshoot"}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('获取网络接口信息', resp_json)
-        return resp_json['Data']
-
-    def get_iface_check(self):
-        json_data = {"func_name": "monitor_iface","action": "show","param": {"TYPE": "iface_check"}}
-        resp = requests.post(self.__base_url + '/Action/call', timeout=5, json=json_data, cookies=self.__cookie)
-        resp_json = json.loads(resp.text)
-        raise_exception('获取网络接口信息', resp_json)
-        return resp_json['Data']['iface_check']
-
-    def get_ether_info_filter(self, wan_name):
-        wan_list = self.get_iface_check()
-        for wan in wan_list:
-            if wan['interface'] == wan_name:
-                return wan
-        return None
-
-
-def raise_exception(desc, json):
-    if not str(json['ErrMsg']).lower().startswith('succ'):
-        raise Exception('{}操作执行失败, 错误信息->{}'.format(desc, json['ErrMsg']))
+        try:
+            response_data = self._call_api("/Action/call", payload)
+            for iface in response_data.get("Data", {}).get("iface_check", []):
+                if iface.get("interface") == interface:
+                    return iface
+            raise NetworkCheckError(f"未找到指定接口: {interface}")
+        except KeyError as e:
+            raise NetworkCheckError("响应格式异常") from e

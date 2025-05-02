@@ -14,4 +14,4 @@ RUN apk add --no-cache tzdata \
     && cp /usr/share/zoneinfo/${TZ} /etc/localtime \
     && echo "${TZ}" > /etc/timezone \
     && apk del tzdata
-ENTRYPOINT ["/app/main.py", "-c", "/config/config.yaml", "--gc"]
+ENTRYPOINT ["/app/main.py", "-c", "/config/config.yaml"]
