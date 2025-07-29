@@ -20,6 +20,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s",
 )
+logging.getLogger('dns_client').setLevel(logging.ERROR)
 
 def main():
     """主程序逻辑"""

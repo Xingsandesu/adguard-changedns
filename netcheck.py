@@ -35,8 +35,11 @@ class HTTPChecker:
     ) -> bool:
         """检查URL是否可达"""
         try:
-            req = DNSClientSession(dns_server, timeout=REQUEST_TIMEOUT) if dns_server else requests
-            response = req.head(url, timeout=REQUEST_TIMEOUT)
+            if dns_server:
+                with DNSClientSession(dns_server, timeout=REQUEST_TIMEOUT) as req:
+                    response = req.head(url, timeout=REQUEST_TIMEOUT)
+            else:
+                response = requests.head(url, timeout=REQUEST_TIMEOUT)
             return response.status_code < 400
         except Exception as e:
             logging.debug(f"访问URL失败: {url}, 错误: {str(e)}")
