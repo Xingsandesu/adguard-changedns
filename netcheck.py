@@ -7,6 +7,7 @@ from config import ConfigType
 from ikuai import IKuaiClient
 from traceback import format_exc
 from const import REQUEST_TIMEOUT, NetworkStatus
+from dns_client.adapters.requests import DNSClientSession
 
 class DNSResolver:
     """DNS解析检查工具类"""
@@ -20,7 +21,6 @@ class DNSResolver:
             resolver.resolve(domain)
             return True
         except Exception:
-            logging.warning(f"域名解析失败: {domain}")
             logging.debug(f"错误详情: {format_exc()}")
             return False
 
@@ -31,10 +31,12 @@ class HTTPChecker:
     @staticmethod
     def is_accessible(
             url: str,
+            dns_server: str = None
     ) -> bool:
         """检查URL是否可达"""
         try:
-            response = requests.head(url, timeout=REQUEST_TIMEOUT)
+            req = DNSClientSession(dns_server, timeout=REQUEST_TIMEOUT) if dns_server else requests
+            response = req.head(url, timeout=REQUEST_TIMEOUT)
             return response.status_code < 400
         except Exception as e:
             logging.debug(f"访问URL失败: {url}, 错误: {str(e)}")
@@ -110,14 +112,13 @@ class NetworkMonitor:
         for domain in self.config["openwrt"]["check_dns_domain"]:
             if not DNSResolver.can_resolve(domain, openwrt_ip):
                 errors.append(f"DNS解析失败: {domain}")
-
         return errors
 
     def _check_http_access(self) -> List[str]:
         """检查HTTP访问"""
         errors = []
         for url in self.config["openwrt"]["check_url"]:
-            if not HTTPChecker.is_accessible(url):
+            if not HTTPChecker.is_accessible(url=url, dns_server=self.config["openwrt"]["host"]):
                 errors.append(f"HTTP访问失败: {url}")
         return errors
 
@@ -167,7 +168,8 @@ class NetworkMonitor:
         """是否首次出现故障"""
         return self.previous_status == NetworkStatus.DEGRADED and self.error_counter == 1
 
-    def _log_status_change(self, new_status: NetworkStatus, error_msg: str):
+    @staticmethod
+    def _log_status_change(new_status: NetworkStatus, error_msg: str):
         """处理状态变更日志"""
         if new_status == NetworkStatus.DEGRADED:
             logging.warning(f"🚨 网络状态降级检测 -> {error_msg}")
